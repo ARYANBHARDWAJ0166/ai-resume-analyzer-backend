@@ -1,8 +1,6 @@
 import os
-import json
 from pydantic_settings import BaseSettings
-from pydantic import field_validator
-from typing import List
+
 
 class Settings(BaseSettings):
     # Database
@@ -20,13 +18,10 @@ class Settings(BaseSettings):
     # File Upload
     UPLOAD_DIR: str = "./uploads"
     MAX_FILE_SIZE: int = 10 * 1024 * 1024
-    ALLOWED_EXTENSIONS: List[str] = ['.pdf', '.docx', '.txt']
+    ALLOWED_EXTENSIONS: str = ".pdf,.docx,.txt"
 
-    # CORS
-    ALLOWED_ORIGINS: List[str] = [
-        "http://localhost:3000",
-        "http://localhost:5173"
-    ]
+    # CORS - stored as string, parsed to list via property
+    ALLOWED_ORIGINS: str = "http://localhost:3000,http://localhost:5173"
 
     # Environment
     ENVIRONMENT: str = "development"
@@ -34,46 +29,6 @@ class Settings(BaseSettings):
     # Job Search
     ADZUNA_APP_ID: str = ""
     ADZUNA_APP_KEY: str = ""
-
-    @field_validator("ALLOWED_ORIGINS", mode="before")
-    @classmethod
-    def parse_allowed_origins(cls, v):
-        if isinstance(v, list):
-            return v
-        if isinstance(v, str):
-            v = v.strip()
-            # Handle JSON array format
-            if v.startswith("["):
-                try:
-                    return json.loads(v)
-                except json.JSONDecodeError:
-                    pass
-            # Handle comma separated
-            return [
-                origin.strip()
-                for origin in v.split(",")
-                if origin.strip()
-            ]
-        return v
-
-    @field_validator("ALLOWED_EXTENSIONS", mode="before")
-    @classmethod
-    def parse_allowed_extensions(cls, v):
-        if isinstance(v, list):
-            return v
-        if isinstance(v, str):
-            v = v.strip()
-            if v.startswith("["):
-                try:
-                    return json.loads(v)
-                except json.JSONDecodeError:
-                    pass
-            return [
-                ext.strip()
-                for ext in v.split(",")
-                if ext.strip()
-            ]
-        return v
 
     class Config:
         env_file = ".env"
@@ -83,11 +38,32 @@ class Settings(BaseSettings):
         super().__init__(**kwargs)
 
         if not self.SECRET_KEY:
-            raise ValueError("❌ SECRET_KEY must be set!")
+            raise ValueError("SECRET_KEY must be set!")
 
         if not self.GEMINI_API_KEY:
-            raise ValueError("❌ GEMINI_API_KEY must be set!")
+            raise ValueError("GEMINI_API_KEY must be set!")
 
         os.makedirs(self.UPLOAD_DIR, exist_ok=True)
+
+    @property
+    def allowed_origins_list(self) -> list:
+        """Parse ALLOWED_ORIGINS string to list"""
+        if not self.ALLOWED_ORIGINS:
+            return ["http://localhost:3000"]
+        return [
+            origin.strip()
+            for origin in self.ALLOWED_ORIGINS.split(",")
+            if origin.strip()
+        ]
+
+    @property
+    def allowed_extensions_list(self) -> list:
+        """Parse ALLOWED_EXTENSIONS string to list"""
+        return [
+            ext.strip()
+            for ext in self.ALLOWED_EXTENSIONS.split(",")
+            if ext.strip()
+        ]
+
 
 settings = Settings()

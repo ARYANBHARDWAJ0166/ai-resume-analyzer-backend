@@ -47,10 +47,10 @@ async def upload_resume(
         raise HTTPException(400, detail="No filename provided")
 
     ext = os.path.splitext(file.filename)[1].lower()
-    if ext not in settings.ALLOWED_EXTENSIONS:
+    if ext not in settings.allowed_extensions_list:
         raise HTTPException(
             400,
-            detail=f"File type '{ext}' not allowed. Allowed: {settings.ALLOWED_EXTENSIONS}"
+            detail=f"File type '{ext}' not allowed. Allowed: {settings.allowed_extensions_list}"
         )
 
     # 2. Read file content
