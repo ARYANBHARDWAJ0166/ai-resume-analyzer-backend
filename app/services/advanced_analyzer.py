@@ -25,13 +25,21 @@ class AdvancedAnalyzer:
         except Exception as e:
             logger.error(f"❌ Failed to initialize Gemini client: {e}")
 
+    def _get_model(self) -> str:
+        """Get model name from settings"""
+        try:
+            from ..config import settings
+            return settings.GEMINI_MODEL
+        except Exception:
+            return "gemini-2.0-flash"
+
     def _call_gemini(self, prompt: str, temperature: float = 0.4) -> Optional[str]:
         """Central Gemini API caller with error handling"""
         if not self.available or not self.client:
             return None
         try:
             response = self.client.models.generate_content(
-                model="gemini-1.5-flash",
+                model=self._get_model(),
                 contents=prompt,
                 config=types.GenerateContentConfig(
                     temperature=temperature,
@@ -74,6 +82,13 @@ class AdvancedAnalyzer:
             "data": {}
         }
 
+    def _unavailable_text(self, feature: str) -> str:
+        """Return unavailable message for text responses"""
+        return (
+            f"{feature} is currently unavailable. "
+            "Please check your Gemini API key and try again."
+        )
+
     # ─── Heatmap ──────────────────────────────────────────────────
     def generate_heatmap(self, resume_text: str) -> Dict:
         """Generate skill heatmap from resume text"""
@@ -92,11 +107,11 @@ Return this exact JSON structure:
 {{
     "skill_frequency": {{
         "<skill_name>": <number 0-100>,
-        ...up to 10 skills
+        "<skill_name>": <number 0-100>
     }},
     "keyword_density": {{
         "<keyword>": <number 0-100>,
-        ...up to 8 keywords
+        "<keyword>": <number 0-100>
     }},
     "section_strength": {{
         "experience": <number 0-100>,
@@ -110,7 +125,10 @@ Return this exact JSON structure:
         response = self._call_gemini(prompt)
         result = self._extract_json(response)
 
-        if result and all(k in result for k in ['skill_frequency', 'keyword_density', 'section_strength']):
+        if result and all(
+            k in result
+            for k in ['skill_frequency', 'keyword_density', 'section_strength']
+        ):
             return result
 
         return self._default_heatmap()
@@ -141,7 +159,6 @@ Return this exact JSON structure:
         if not self.available:
             return self._unavailable_text("Section rewrite")
 
-        # Limit input size
         section_text = section_text[:3000]
 
         prompt = f"""
@@ -203,7 +220,11 @@ Write a compelling 3-paragraph cover letter that:
         return self._unavailable_text("Cover letter generation")
 
     # ─── Skill Gap ────────────────────────────────────────────────
-    def analyze_skill_gap(self, current_skills: List[str], job_skills: List[str]) -> Dict:
+    def analyze_skill_gap(
+        self,
+        current_skills: List[str],
+        job_skills: List[str]
+    ) -> Dict:
         """Analyze skill gap between resume and job requirements"""
         if not current_skills and not job_skills:
             return {
@@ -211,12 +232,12 @@ Write a compelling 3-paragraph cover letter that:
                 "current_skills": [],
                 "required_skills": [],
                 "missing_skills": [],
+                "matching_skills": [],
                 "overlap_percentage": 0.0,
                 "learning_resources": [],
                 "message": "No skills provided for analysis."
             }
 
-        # Normalize skills
         cur_set = {s.lower().strip() for s in current_skills if s}
         req_set = {s.lower().strip() for s in job_skills if s}
 
@@ -227,7 +248,6 @@ Write a compelling 3-paragraph cover letter that:
             (len(matching) / len(req_set) * 100), 2
         ) if req_set else 0.0
 
-        # Generate learning resources with AI if available
         resources = self._generate_learning_resources(missing[:5])
 
         return {
@@ -246,7 +266,6 @@ Write a compelling 3-paragraph cover letter that:
             return []
 
         if not self.available:
-            # Return basic Coursera links without AI
             return [
                 {
                     "skill": skill,
@@ -267,8 +286,8 @@ Return this exact JSON structure:
 [
     {{
         "skill": "<skill name>",
-        "platform": "<platform name e.g. Coursera, YouTube, Udemy>",
-        "url": "<real learning url>",
+        "platform": "<platform name>",
+        "url": "<learning url>",
         "description": "<one sentence description>"
     }}
 ]
@@ -277,7 +296,6 @@ Return this exact JSON structure:
 
         if response:
             try:
-                # Try to extract JSON array
                 match = re.search(r'\[.*\]', response, re.DOTALL)
                 if match:
                     resources = json.loads(match.group())
@@ -286,7 +304,6 @@ Return this exact JSON structure:
             except json.JSONDecodeError:
                 logger.error("❌ Could not parse learning resources JSON")
 
-        # Fallback to basic links
         return [
             {
                 "skill": skill,
@@ -306,7 +323,7 @@ Return this exact JSON structure:
         """Generate a personalized learning roadmap"""
         if not self.available:
             return self._unavailable_response(
-                "Learning roadmap generation unavailable. Please check your API key."
+                "Learning roadmap generation unavailable."
             )
 
         skills_str = ', '.join(current_skills[:20]) if current_skills else 'Not specified'
@@ -413,8 +430,8 @@ Return this exact JSON structure:
             },
             {
                 "category": "situational",
-                "question": "How do you handle tight deadlines and competing priorities?",
-                "sample_answer": "Focus on prioritization, communication, and time management.",
+                "question": "How do you handle tight deadlines?",
+                "sample_answer": "Focus on prioritization and communication.",
                 "difficulty": "easy",
                 "ai_powered": False
             }
@@ -428,7 +445,6 @@ Return this exact JSON structure:
 
         try:
             async with httpx.AsyncClient(timeout=10.0) as client:
-                # Get user profile
                 user_response = await client.get(
                     f"https://api.github.com/users/{username}",
                     headers={"Accept": "application/vnd.github.v3+json"}
@@ -442,7 +458,6 @@ Return this exact JSON structure:
 
                 user_data = user_response.json()
 
-                # Get repositories
                 repos_response = await client.get(
                     f"https://api.github.com/users/{username}/repos",
                     params={"sort": "updated", "per_page": 20},
@@ -451,7 +466,6 @@ Return this exact JSON structure:
 
                 repos = repos_response.json() if repos_response.status_code == 200 else []
 
-                # Calculate language stats
                 languages = {}
                 repo_list = []
 
@@ -484,7 +498,6 @@ Return this exact JSON structure:
                     }
                 }
 
-                # Enhance with AI analysis if available
                 if self.available and repo_list:
                     ai_analysis = await self._analyze_github_with_ai(
                         username, languages, repo_list
@@ -523,7 +536,7 @@ Return this exact JSON structure:
 {{
     "code_quality": "<assessment>",
     "activity_level": "<low/medium/high>",
-    "primary_focus": "<e.g. web development, data science>",
+    "primary_focus": "<e.g. web development>",
     "strengths": ["<strength1>", "<strength2>"],
     "suggestions": ["<suggestion1>", "<suggestion2>"]
 }}
@@ -544,17 +557,14 @@ Return this exact JSON structure:
         if not self.available:
             return self._unavailable_text("Chat")
 
-        # Build context from resume
         name = resume_data.get('name', 'the candidate')
         skills = resume_data.get('skills', [])[:15]
         full_text = resume_data.get('full_text', '')[:2000]
 
-        # Build conversation history (in correct order)
         history_text = ""
         if chat_history:
-            # Reverse to get chronological order
             ordered_history = list(reversed(chat_history))
-            for entry in ordered_history[-5:]:  # Last 5 messages
+            for entry in ordered_history[-5:]:
                 history_text += f"User: {entry.get('user_message', '')}\n"
                 history_text += f"Assistant: {entry.get('ai_response', '')}\n"
 
@@ -581,11 +591,3 @@ Provide a helpful, specific answer based on the resume content.
             return response
 
         return self._unavailable_text("Chat")
-
-    # ─── Helper Methods ───────────────────────────────────────────
-    def _unavailable_text(self, feature: str) -> str:
-        """Return unavailable message for text responses"""
-        return (
-            f"{feature} is currently unavailable. "
-            "Please check your Gemini API key and try again."
-        )
