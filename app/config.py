@@ -1,4 +1,5 @@
 import os
+import json
 from pydantic_settings import BaseSettings
 from pydantic import field_validator
 from typing import List
@@ -22,7 +23,10 @@ class Settings(BaseSettings):
     ALLOWED_EXTENSIONS: List[str] = ['.pdf', '.docx', '.txt']
 
     # CORS
-    ALLOWED_ORIGINS: List[str] = ["http://localhost:3000", "http://localhost:5173"]
+    ALLOWED_ORIGINS: List[str] = [
+        "http://localhost:3000",
+        "http://localhost:5173"
+    ]
 
     # Environment
     ENVIRONMENT: str = "development"
@@ -34,22 +38,41 @@ class Settings(BaseSettings):
     @field_validator("ALLOWED_ORIGINS", mode="before")
     @classmethod
     def parse_allowed_origins(cls, v):
+        if isinstance(v, list):
+            return v
         if isinstance(v, str):
-            # Handle comma separated string
+            v = v.strip()
+            # Handle JSON array format
             if v.startswith("["):
-                import json
-                return json.loads(v)
-            return [origin.strip() for origin in v.split(",")]
+                try:
+                    return json.loads(v)
+                except json.JSONDecodeError:
+                    pass
+            # Handle comma separated
+            return [
+                origin.strip()
+                for origin in v.split(",")
+                if origin.strip()
+            ]
         return v
 
     @field_validator("ALLOWED_EXTENSIONS", mode="before")
     @classmethod
     def parse_allowed_extensions(cls, v):
+        if isinstance(v, list):
+            return v
         if isinstance(v, str):
+            v = v.strip()
             if v.startswith("["):
-                import json
-                return json.loads(v)
-            return [ext.strip() for ext in v.split(",")]
+                try:
+                    return json.loads(v)
+                except json.JSONDecodeError:
+                    pass
+            return [
+                ext.strip()
+                for ext in v.split(",")
+                if ext.strip()
+            ]
         return v
 
     class Config:
@@ -59,14 +82,12 @@ class Settings(BaseSettings):
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
 
-        # Validate critical settings
         if not self.SECRET_KEY:
-            raise ValueError("❌ SECRET_KEY must be set in .env file!")
+            raise ValueError("❌ SECRET_KEY must be set!")
 
         if not self.GEMINI_API_KEY:
-            raise ValueError("❌ GEMINI_API_KEY must be set in .env file!")
+            raise ValueError("❌ GEMINI_API_KEY must be set!")
 
-        # Create upload directory
         os.makedirs(self.UPLOAD_DIR, exist_ok=True)
 
 settings = Settings()
