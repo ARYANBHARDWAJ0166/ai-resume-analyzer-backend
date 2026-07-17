@@ -1,6 +1,7 @@
 import json
 import re
 import logging
+import time
 import httpx
 from typing import Dict, List, Optional
 from google import genai
@@ -15,7 +16,7 @@ class AdvancedAnalyzer:
         self.client = None
 
         if not api_key:
-            logger.warning("⚠️ No Gemini API key provided. Advanced analysis unavailable.")
+            logger.warning("⚠️ No Gemini API key provided.")
             return
 
         try:
@@ -31,25 +32,53 @@ class AdvancedAnalyzer:
             from ..config import settings
             return settings.GEMINI_MODEL
         except Exception:
-            return "gemini-2.0-flash"
+            return "gemini-1.5-flash-latest"
 
-    def _call_gemini(self, prompt: str, temperature: float = 0.4) -> Optional[str]:
-        """Central Gemini API caller with error handling"""
+    def _call_gemini(
+        self,
+        prompt: str,
+        temperature: float = 0.4
+    ) -> Optional[str]:
+        """Central Gemini API caller with retry logic"""
         if not self.available or not self.client:
             return None
-        try:
-            response = self.client.models.generate_content(
-                model=self._get_model(),
-                contents=prompt,
-                config=types.GenerateContentConfig(
-                    temperature=temperature,
-                    max_output_tokens=2048,
+
+        max_retries = 3
+        retry_delays = [5, 15, 30]
+
+        for attempt in range(max_retries):
+            try:
+                response = self.client.models.generate_content(
+                    model=self._get_model(),
+                    contents=prompt,
+                    config=types.GenerateContentConfig(
+                        temperature=temperature,
+                        max_output_tokens=2048,
+                    )
                 )
-            )
-            return response.text.strip() if response.text else None
-        except Exception as e:
-            logger.error(f"❌ Gemini API call failed: {e}")
-            return None
+                return response.text.strip() if response.text else None
+
+            except Exception as e:
+                error_str = str(e)
+                logger.error(
+                    f"❌ Gemini API call failed attempt {attempt + 1}: {e}"
+                )
+
+                if '429' in error_str:
+                    if attempt < max_retries - 1:
+                        delay = retry_delays[attempt]
+                        logger.warning(
+                            f"⚠️ Rate limited. Retrying in {delay}s..."
+                        )
+                        time.sleep(delay)
+                        continue
+                    else:
+                        logger.error("❌ Max retries reached for rate limit")
+                        return None
+
+                return None
+
+        return None
 
     def _extract_json(self, text: str) -> Optional[Dict]:
         """Safely extract JSON from Gemini response"""
@@ -74,7 +103,10 @@ class AdvancedAnalyzer:
         logger.error("❌ Could not extract JSON from Gemini response")
         return None
 
-    def _unavailable_response(self, message: str = "AI analysis unavailable.") -> Dict:
+    def _unavailable_response(
+        self,
+        message: str = "AI analysis unavailable."
+    ) -> Dict:
         """Standard unavailable response"""
         return {
             "ai_powered": False,
@@ -145,7 +177,7 @@ Return this exact JSON structure:
                 "projects": 0,
                 "summary": 0
             },
-            "message": "Heatmap analysis unavailable. Please check your API key."
+            "message": "Heatmap unavailable. Please check your API key."
         }
 
     # ─── Rewrite Section ──────────────────────────────────────────
@@ -172,14 +204,14 @@ Original Text:
 {section_text}
 """
         response = self._call_gemini(prompt, temperature=0.5)
-
-        if response:
-            return response
-
-        return self._unavailable_text("Section rewrite")
+        return response if response else self._unavailable_text("Section rewrite")
 
     # ─── Cover Letter ─────────────────────────────────────────────
-    def generate_cover_letter(self, resume_data: Dict, job_data: Dict) -> str:
+    def generate_cover_letter(
+        self,
+        resume_data: Dict,
+        job_data: Dict
+    ) -> str:
         """Generate a personalized cover letter"""
         if not self.available:
             return self._unavailable_text("Cover letter generation")
@@ -213,11 +245,7 @@ Write a compelling 3-paragraph cover letter that:
 3. Closes with a call to action
 """
         response = self._call_gemini(prompt, temperature=0.6)
-
-        if response:
-            return response
-
-        return self._unavailable_text("Cover letter generation")
+        return response if response else self._unavailable_text("Cover letter")
 
     # ─── Skill Gap ────────────────────────────────────────────────
     def analyze_skill_gap(
@@ -240,10 +268,8 @@ Write a compelling 3-paragraph cover letter that:
 
         cur_set = {s.lower().strip() for s in current_skills if s}
         req_set = {s.lower().strip() for s in job_skills if s}
-
         missing = list(req_set - cur_set)
         matching = list(cur_set & req_set)
-
         overlap = round(
             (len(matching) / len(req_set) * 100), 2
         ) if req_set else 0.0
@@ -260,7 +286,10 @@ Write a compelling 3-paragraph cover letter that:
             "learning_resources": resources
         }
 
-    def _generate_learning_resources(self, skills: List[str]) -> List[Dict]:
+    def _generate_learning_resources(
+        self,
+        skills: List[str]
+    ) -> List[Dict]:
         """Generate learning resources for missing skills"""
         if not skills:
             return []
@@ -293,7 +322,6 @@ Return this exact JSON structure:
 ]
 """
         response = self._call_gemini(prompt)
-
         if response:
             try:
                 match = re.search(r'\[.*\]', response, re.DOTALL)
@@ -326,7 +354,11 @@ Return this exact JSON structure:
                 "Learning roadmap generation unavailable."
             )
 
-        skills_str = ', '.join(current_skills[:20]) if current_skills else 'Not specified'
+        skills_str = (
+            ', '.join(current_skills[:20])
+            if current_skills
+            else 'Not specified'
+        )
 
         prompt = f"""
 Create a personalized learning roadmap for someone wanting to become a {target_role}.
@@ -395,7 +427,6 @@ Return this exact JSON structure:
 ]
 """
         response = self._call_gemini(prompt)
-
         if response:
             try:
                 match = re.search(r'\[.*\]', response, re.DOTALL)
@@ -408,7 +439,10 @@ Return this exact JSON structure:
 
         return self._default_interview_questions(resume_data)
 
-    def _default_interview_questions(self, resume_data: Dict) -> List[Dict]:
+    def _default_interview_questions(
+        self,
+        resume_data: Dict
+    ) -> List[Dict]:
         """Return generic questions when AI unavailable"""
         skills = resume_data.get('skills', ['your primary skill'])
         first_skill = skills[0] if skills else 'your primary skill'
@@ -464,7 +498,11 @@ Return this exact JSON structure:
                     headers={"Accept": "application/vnd.github.v3+json"}
                 )
 
-                repos = repos_response.json() if repos_response.status_code == 200 else []
+                repos = (
+                    repos_response.json()
+                    if repos_response.status_code == 200
+                    else []
+                )
 
                 languages = {}
                 repo_list = []
@@ -474,7 +512,6 @@ Return this exact JSON structure:
                         lang = repo.get('language')
                         if lang:
                             languages[lang] = languages.get(lang, 0) + 1
-
                         repo_list.append({
                             "name": repo.get('name', ''),
                             "description": repo.get('description', ''),
@@ -512,7 +549,7 @@ Return this exact JSON structure:
                 return result
 
         except httpx.TimeoutException:
-            logger.error(f"❌ GitHub API timeout for user: {username}")
+            logger.error(f"❌ GitHub API timeout for: {username}")
             return {"error": "GitHub API request timed out"}
         except Exception as e:
             logger.error(f"❌ GitHub analysis error: {e}")
@@ -543,8 +580,9 @@ Return this exact JSON structure:
 """
         response = self._call_gemini(prompt)
         result = self._extract_json(response)
-
-        return result if result else {"message": "AI analysis could not be generated"}
+        return result if result else {
+            "message": "AI analysis could not be generated"
+        }
 
     # ─── Chat With Resume ─────────────────────────────────────────
     def chat_with_resume(
@@ -586,8 +624,4 @@ Current Question: {user_message}
 Provide a helpful, specific answer based on the resume content.
 """
         response = self._call_gemini(prompt, temperature=0.5)
-
-        if response:
-            return response
-
-        return self._unavailable_text("Chat")
+        return response if response else self._unavailable_text("Chat")

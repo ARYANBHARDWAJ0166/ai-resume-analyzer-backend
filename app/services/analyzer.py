@@ -1,6 +1,7 @@
 import json
 import re
 import logging
+import time
 from typing import Dict, Optional
 from google import genai
 from google.genai import types
@@ -12,7 +13,6 @@ class ResumeAnalyzer:
     def __init__(self, api_key: str):
         self.available = False
         self.client = None
-        self.model = None
 
         if not api_key:
             logger.warning("⚠️ No Gemini API key provided. AI analysis unavailable.")
@@ -31,27 +31,50 @@ class ResumeAnalyzer:
             from ..config import settings
             return settings.GEMINI_MODEL
         except Exception:
-            return "gemini-2.0-flash"
+            return "gemini-1.5-flash-latest"
 
     def _call_gemini(self, prompt: str) -> Optional[str]:
-        """Central method to call Gemini API with error handling"""
+        """Central method to call Gemini API with retry logic"""
         if not self.available or not self.client:
             return None
 
-        try:
-            response = self.client.models.generate_content(
-                model=self._get_model(),
-                contents=prompt,
-                config=types.GenerateContentConfig(
-                    temperature=0.3,
-                    max_output_tokens=2048,
-                )
-            )
-            return response.text.strip() if response.text else None
+        max_retries = 3
+        retry_delays = [5, 15, 30]
 
-        except Exception as e:
-            logger.error(f"❌ Gemini API call failed: {e}")
-            return None
+        for attempt in range(max_retries):
+            try:
+                response = self.client.models.generate_content(
+                    model=self._get_model(),
+                    contents=prompt,
+                    config=types.GenerateContentConfig(
+                        temperature=0.3,
+                        max_output_tokens=2048,
+                    )
+                )
+                return response.text.strip() if response.text else None
+
+            except Exception as e:
+                error_str = str(e)
+                logger.error(
+                    f"❌ Gemini API call failed attempt {attempt + 1}: {e}"
+                )
+
+                if '429' in error_str:
+                    if attempt < max_retries - 1:
+                        delay = retry_delays[attempt]
+                        logger.warning(
+                            f"⚠️ Rate limited. Retrying in {delay}s..."
+                        )
+                        time.sleep(delay)
+                        continue
+                    else:
+                        logger.error("❌ Max retries reached for rate limit")
+                        return None
+
+                # Non rate limit error - don't retry
+                return None
+
+        return None
 
     def _extract_json(self, text: str) -> Optional[Dict]:
         """Safely extract JSON from Gemini response"""
