@@ -1,29 +1,44 @@
-﻿fastapi==0.115.6
+﻿# Web Framework
+fastapi==0.115.6
 uvicorn[standard]==0.32.1
 
+# Database
 SQLAlchemy==2.0.36
 psycopg2-binary==2.9.10
 
+# Pydantic
 pydantic==2.10.4
 pydantic-settings==2.7.0
 python-dotenv==1.0.1
 python-multipart==0.0.20
 
-google-genai>=1.0.0,<2.0.0
+# AI - Groq instead of Gemini
+groq==0.13.0
 
+# Resume Parsing
 pdfplumber==0.11.4
 python-docx==1.1.2
+
+# PDF Report Generation
 reportlab==4.2.5
 
+# HTTP Client
 httpx==0.28.1
-beautifulsoup4==4.12.3
-lxml==5.3.0
 
-aiofiles==24.1.0
+# File Type Detection
 filetype==1.2.0
 
+# Async File I/O
+aiofiles==24.1.0
+
+# Auth
 passlib[bcrypt]==1.7.4
 python-jose[cryptography]==3.3.0
 email-validator==2.2.0
 
+# Rate Limiting
 slowapi==0.1.9
+
+# HTML Parsing
+beautifulsoup4==4.12.3
+lxml==5.3.0

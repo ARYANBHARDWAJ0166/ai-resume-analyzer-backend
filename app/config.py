@@ -6,7 +6,11 @@ class Settings(BaseSettings):
     # Database
     DATABASE_URL: str = "sqlite:///./resume.db"
 
-    # Gemini AI
+    # Groq AI
+    GROQ_API_KEY: str = ""
+    GROQ_MODEL: str = "llama-3.3-70b-versatile"
+
+    # Keep Gemini as fallback (optional)
     GEMINI_API_KEY: str = ""
     GEMINI_MODEL: str = "gemini-2.0-flash-001"
 
@@ -20,7 +24,7 @@ class Settings(BaseSettings):
     MAX_FILE_SIZE: int = 10 * 1024 * 1024
     ALLOWED_EXTENSIONS: str = ".pdf,.docx,.txt"
 
-    # CORS - stored as string, parsed to list via property
+    # CORS
     ALLOWED_ORIGINS: str = "http://localhost:3000,http://localhost:5173"
 
     # Environment
@@ -40,14 +44,13 @@ class Settings(BaseSettings):
         if not self.SECRET_KEY:
             raise ValueError("SECRET_KEY must be set!")
 
-        if not self.GEMINI_API_KEY:
-            raise ValueError("GEMINI_API_KEY must be set!")
+        if not self.GROQ_API_KEY and not self.GEMINI_API_KEY:
+            raise ValueError("Either GROQ_API_KEY or GEMINI_API_KEY must be set!")
 
         os.makedirs(self.UPLOAD_DIR, exist_ok=True)
 
     @property
     def allowed_origins_list(self) -> list:
-        """Parse ALLOWED_ORIGINS string to list"""
         if not self.ALLOWED_ORIGINS:
             return ["http://localhost:3000"]
         return [
@@ -58,7 +61,6 @@ class Settings(BaseSettings):
 
     @property
     def allowed_extensions_list(self) -> list:
-        """Parse ALLOWED_EXTENSIONS string to list"""
         return [
             ext.strip()
             for ext in self.ALLOWED_EXTENSIONS.split(",")

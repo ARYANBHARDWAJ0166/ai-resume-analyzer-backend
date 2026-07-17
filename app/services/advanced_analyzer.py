@@ -4,42 +4,43 @@ import logging
 import time
 import httpx
 from typing import Dict, List, Optional
-from google import genai
-from google.genai import types
+from groq import Groq
 
 logger = logging.getLogger(__name__)
 
 
 class AdvancedAnalyzer:
-    def __init__(self, api_key: str):
+    def __init__(self, api_key: str = None):
         self.available = False
         self.client = None
 
-        if not api_key:
-            logger.warning("⚠️ No Gemini API key provided.")
-            return
-
-        try:
-            self.client = genai.Client(api_key=api_key)
-            self.available = True
-            logger.info("✅ Gemini AI client initialized for AdvancedAnalyzer")
-        except Exception as e:
-            logger.error(f"❌ Failed to initialize Gemini client: {e}")
-
-    def _get_model(self) -> str:
-        """Get model name from settings"""
         try:
             from ..config import settings
-            return settings.GEMINI_MODEL
-        except Exception:
-            return "gemini-1.5-flash-latest"
+            groq_key = settings.GROQ_API_KEY
+            if groq_key:
+                self.client = Groq(api_key=groq_key)
+                self.available = True
+                logger.info("✅ Groq AI client initialized for AdvancedAnalyzer")
+                return
+        except Exception as e:
+            logger.error(f"❌ Failed to initialize Groq client: {e}")
 
-    def _call_gemini(
+        logger.warning("⚠️ No AI client available for AdvancedAnalyzer")
+
+    def _get_model(self) -> str:
+        try:
+            from ..config import settings
+            return settings.GROQ_MODEL
+        except Exception:
+            return "llama-3.3-70b-versatile"
+
+    def _call_ai(
         self,
         prompt: str,
-        temperature: float = 0.4
+        temperature: float = 0.4,
+        system: str = "You are a helpful AI assistant. Always respond with valid JSON when asked."
     ) -> Optional[str]:
-        """Central Gemini API caller with retry logic"""
+        """Central Groq API caller with retry logic"""
         if not self.available or not self.client:
             return None
 
@@ -48,32 +49,31 @@ class AdvancedAnalyzer:
 
         for attempt in range(max_retries):
             try:
-                response = self.client.models.generate_content(
+                response = self.client.chat.completions.create(
                     model=self._get_model(),
-                    contents=prompt,
-                    config=types.GenerateContentConfig(
-                        temperature=temperature,
-                        max_output_tokens=2048,
-                    )
+                    messages=[
+                        {"role": "system", "content": system},
+                        {"role": "user", "content": prompt}
+                    ],
+                    temperature=temperature,
+                    max_tokens=2048,
                 )
-                return response.text.strip() if response.text else None
+                return response.choices[0].message.content.strip()
 
             except Exception as e:
                 error_str = str(e)
                 logger.error(
-                    f"❌ Gemini API call failed attempt {attempt + 1}: {e}"
+                    f"❌ Groq API call failed attempt {attempt + 1}: {e}"
                 )
 
-                if '429' in error_str:
+                if '429' in error_str or 'rate' in error_str.lower():
                     if attempt < max_retries - 1:
                         delay = retry_delays[attempt]
-                        logger.warning(
-                            f"⚠️ Rate limited. Retrying in {delay}s..."
-                        )
+                        logger.warning(f"⚠️ Rate limited. Retrying in {delay}s...")
                         time.sleep(delay)
                         continue
                     else:
-                        logger.error("❌ Max retries reached for rate limit")
+                        logger.error("❌ Max retries reached")
                         return None
 
                 return None
@@ -81,7 +81,6 @@ class AdvancedAnalyzer:
         return None
 
     def _extract_json(self, text: str) -> Optional[Dict]:
-        """Safely extract JSON from Gemini response"""
         if not text:
             return None
         try:
@@ -100,33 +99,19 @@ class AdvancedAnalyzer:
                 return json.loads(match.group())
         except json.JSONDecodeError:
             pass
-        logger.error("❌ Could not extract JSON from Gemini response")
+        logger.error("❌ Could not extract JSON from AI response")
         return None
 
-    def _unavailable_response(
-        self,
-        message: str = "AI analysis unavailable."
-    ) -> Dict:
-        """Standard unavailable response"""
-        return {
-            "ai_powered": False,
-            "message": message,
-            "data": {}
-        }
+    def _unavailable_response(self, message: str = "AI analysis unavailable.") -> Dict:
+        return {"ai_powered": False, "message": message, "data": {}}
 
     def _unavailable_text(self, feature: str) -> str:
-        """Return unavailable message for text responses"""
-        return (
-            f"{feature} is currently unavailable. "
-            "Please check your Gemini API key and try again."
-        )
+        return f"{feature} is currently unavailable. Please check your API key."
 
     # ─── Heatmap ──────────────────────────────────────────────────
     def generate_heatmap(self, resume_text: str) -> Dict:
-        """Generate skill heatmap from resume text"""
         if not resume_text or not resume_text.strip():
             return self._default_heatmap()
-
         if not self.available:
             return self._default_heatmap()
 
@@ -138,11 +123,9 @@ Resume Text: {resume_text[:3000]}
 Return this exact JSON structure:
 {{
     "skill_frequency": {{
-        "<skill_name>": <number 0-100>,
         "<skill_name>": <number 0-100>
     }},
     "keyword_density": {{
-        "<keyword>": <number 0-100>,
         "<keyword>": <number 0-100>
     }},
     "section_strength": {{
@@ -154,7 +137,7 @@ Return this exact JSON structure:
     }}
 }}
 """
-        response = self._call_gemini(prompt)
+        response = self._call_ai(prompt)
         result = self._extract_json(response)
 
         if result and all(
@@ -177,7 +160,7 @@ Return this exact JSON structure:
                 "projects": 0,
                 "summary": 0
             },
-            "message": "Heatmap unavailable. Please check your API key."
+            "message": "Heatmap unavailable."
         }
 
     # ─── Rewrite Section ──────────────────────────────────────────
@@ -187,32 +170,26 @@ Return this exact JSON structure:
         section_type: str = "experience",
         style: str = "professional"
     ) -> str:
-        """Rewrite a resume section using AI"""
         if not self.available:
             return self._unavailable_text("Section rewrite")
 
-        section_text = section_text[:3000]
-
         prompt = f"""
-You are an expert resume writer.
 Rewrite this {section_type} resume section in a {style} style.
 Use strong action verbs and quantify achievements where possible.
-Keep it concise and ATS-friendly.
 Return ONLY the rewritten text, no explanations.
 
 Original Text:
-{section_text}
+{section_text[:3000]}
 """
-        response = self._call_gemini(prompt, temperature=0.5)
+        response = self._call_ai(
+            prompt,
+            temperature=0.5,
+            system="You are an expert resume writer."
+        )
         return response if response else self._unavailable_text("Section rewrite")
 
     # ─── Cover Letter ─────────────────────────────────────────────
-    def generate_cover_letter(
-        self,
-        resume_data: Dict,
-        job_data: Dict
-    ) -> str:
-        """Generate a personalized cover letter"""
+    def generate_cover_letter(self, resume_data: Dict, job_data: Dict) -> str:
         if not self.available:
             return self._unavailable_text("Cover letter generation")
 
@@ -225,26 +202,27 @@ Original Text:
         job_description = job_data.get('description', '')[:2000]
 
         prompt = f"""
-Write a professional and personalized cover letter.
+Write a professional cover letter.
 Return ONLY the cover letter text, no explanations.
 
-Candidate Details:
+Candidate:
 - Name: {name}
 - Skills: {', '.join(skills) if skills else 'Not specified'}
 - Experience: {experience}
 - Education: {education}
 
-Job Details:
+Job:
 - Position: {job_title}
 - Company: {company}
-- Job Description: {job_description}
+- Description: {job_description}
 
-Write a compelling 3-paragraph cover letter that:
-1. Opens with enthusiasm for the specific role
-2. Highlights relevant skills and experience
-3. Closes with a call to action
+Write a compelling 3-paragraph cover letter.
 """
-        response = self._call_gemini(prompt, temperature=0.6)
+        response = self._call_ai(
+            prompt,
+            temperature=0.6,
+            system="You are an expert cover letter writer."
+        )
         return response if response else self._unavailable_text("Cover letter")
 
     # ─── Skill Gap ────────────────────────────────────────────────
@@ -253,7 +231,6 @@ Write a compelling 3-paragraph cover letter that:
         current_skills: List[str],
         job_skills: List[str]
     ) -> Dict:
-        """Analyze skill gap between resume and job requirements"""
         if not current_skills and not job_skills:
             return {
                 "ai_powered": False,
@@ -263,7 +240,7 @@ Write a compelling 3-paragraph cover letter that:
                 "matching_skills": [],
                 "overlap_percentage": 0.0,
                 "learning_resources": [],
-                "message": "No skills provided for analysis."
+                "message": "No skills provided."
             }
 
         cur_set = {s.lower().strip() for s in current_skills if s}
@@ -286,11 +263,7 @@ Write a compelling 3-paragraph cover letter that:
             "learning_resources": resources
         }
 
-    def _generate_learning_resources(
-        self,
-        skills: List[str]
-    ) -> List[Dict]:
-        """Generate learning resources for missing skills"""
+    def _generate_learning_resources(self, skills: List[str]) -> List[Dict]:
         if not skills:
             return []
 
@@ -306,22 +279,22 @@ Write a compelling 3-paragraph cover letter that:
             ]
 
         prompt = f"""
-For each of these skills, suggest ONE specific learning resource.
+For each skill suggest ONE learning resource.
 Return ONLY a valid JSON array. No extra text.
 
 Skills: {', '.join(skills)}
 
-Return this exact JSON structure:
+Return:
 [
     {{
-        "skill": "<skill name>",
-        "platform": "<platform name>",
-        "url": "<learning url>",
-        "description": "<one sentence description>"
+        "skill": "<skill>",
+        "platform": "<platform>",
+        "url": "<url>",
+        "description": "<description>"
     }}
 ]
 """
-        response = self._call_gemini(prompt)
+        response = self._call_ai(prompt)
         if response:
             try:
                 match = re.search(r'\[.*\]', response, re.DOTALL)
@@ -330,7 +303,7 @@ Return this exact JSON structure:
                     if isinstance(resources, list):
                         return resources
             except json.JSONDecodeError:
-                logger.error("❌ Could not parse learning resources JSON")
+                pass
 
         return [
             {
@@ -348,11 +321,8 @@ Return this exact JSON structure:
         current_skills: List[str],
         target_role: str
     ) -> Dict:
-        """Generate a personalized learning roadmap"""
         if not self.available:
-            return self._unavailable_response(
-                "Learning roadmap generation unavailable."
-            )
+            return self._unavailable_response("Roadmap generation unavailable.")
 
         skills_str = (
             ', '.join(current_skills[:20])
@@ -361,13 +331,13 @@ Return this exact JSON structure:
         )
 
         prompt = f"""
-Create a personalized learning roadmap for someone wanting to become a {target_role}.
+Create a learning roadmap for someone wanting to become a {target_role}.
 Return ONLY a valid JSON object. No extra text.
 
 Current Skills: {skills_str}
 Target Role: {target_role}
 
-Return this exact JSON structure:
+Return:
 {{
     "target_role": "{target_role}",
     "estimated_duration": "<e.g. 3-6 months>",
@@ -375,25 +345,23 @@ Return this exact JSON structure:
     "phases": [
         {{
             "phase": 1,
-            "title": "<phase title>",
-            "duration": "<e.g. 1 month>",
-            "skills": ["<skill1>", "<skill2>"],
-            "resources": ["<resource1>", "<resource2>"]
+            "title": "<title>",
+            "duration": "<duration>",
+            "skills": ["<skill1>"],
+            "resources": ["<resource1>"]
         }}
     ],
-    "final_skills": ["<skill1>", "<skill2>"]
+    "final_skills": ["<skill1>"]
 }}
 """
-        response = self._call_gemini(prompt)
+        response = self._call_ai(prompt)
         result = self._extract_json(response)
 
         if result:
             result['ai_powered'] = True
             return result
 
-        return self._unavailable_response(
-            "Could not generate roadmap. Please try again."
-        )
+        return self._unavailable_response("Could not generate roadmap.")
 
     # ─── Interview Questions ───────────────────────────────────────
     def generate_interview_questions(
@@ -401,7 +369,6 @@ Return this exact JSON structure:
         resume_data: Dict,
         job_data: Dict
     ) -> List[Dict]:
-        """Generate personalized interview questions"""
         if not self.available:
             return self._default_interview_questions(resume_data)
 
@@ -416,17 +383,17 @@ Return ONLY a valid JSON array. No extra text.
 Candidate Skills: {', '.join(skills) if skills else 'Not specified'}
 Job Description: {job_description}
 
-Return this exact JSON structure:
+Return:
 [
     {{
         "category": "<technical/behavioral/situational>",
-        "question": "<specific interview question>",
-        "sample_answer": "<brief guide for answering>",
+        "question": "<question>",
+        "sample_answer": "<answer guide>",
         "difficulty": "<easy/medium/hard>"
     }}
 ]
 """
-        response = self._call_gemini(prompt)
+        response = self._call_ai(prompt)
         if response:
             try:
                 match = re.search(r'\[.*\]', response, re.DOTALL)
@@ -435,37 +402,32 @@ Return this exact JSON structure:
                     if isinstance(questions, list) and len(questions) > 0:
                         return questions
             except json.JSONDecodeError:
-                logger.error("❌ Could not parse interview questions JSON")
+                pass
 
         return self._default_interview_questions(resume_data)
 
-    def _default_interview_questions(
-        self,
-        resume_data: Dict
-    ) -> List[Dict]:
-        """Return generic questions when AI unavailable"""
+    def _default_interview_questions(self, resume_data: Dict) -> List[Dict]:
         skills = resume_data.get('skills', ['your primary skill'])
         first_skill = skills[0] if skills else 'your primary skill'
-
         return [
             {
                 "category": "technical",
-                "question": f"Can you describe your experience with {first_skill}?",
-                "sample_answer": "Describe specific projects and measurable outcomes.",
+                "question": f"Describe your experience with {first_skill}?",
+                "sample_answer": "Describe specific projects and outcomes.",
                 "difficulty": "medium",
                 "ai_powered": False
             },
             {
                 "category": "behavioral",
-                "question": "Tell me about a challenging project you worked on.",
-                "sample_answer": "Use the STAR method: Situation, Task, Action, Result.",
+                "question": "Tell me about a challenging project.",
+                "sample_answer": "Use STAR method.",
                 "difficulty": "medium",
                 "ai_powered": False
             },
             {
                 "category": "situational",
                 "question": "How do you handle tight deadlines?",
-                "sample_answer": "Focus on prioritization and communication.",
+                "sample_answer": "Focus on prioritization.",
                 "difficulty": "easy",
                 "ai_powered": False
             }
@@ -473,7 +435,6 @@ Return this exact JSON structure:
 
     # ─── GitHub Analysis ──────────────────────────────────────────
     async def analyze_github(self, username: str) -> Dict:
-        """Analyze GitHub profile using public API"""
         if not username or not username.strip():
             return {"error": "Username is required"}
 
@@ -561,28 +522,25 @@ Return this exact JSON structure:
         languages: Dict,
         repos: List[Dict]
     ) -> Dict:
-        """Use Gemini to analyze GitHub profile"""
         prompt = f"""
 Analyze this GitHub profile and return ONLY a valid JSON object.
 
 Username: {username}
 Languages: {languages}
-Top Repositories: {repos[:5]}
+Repositories: {repos[:5]}
 
-Return this exact JSON structure:
+Return:
 {{
     "code_quality": "<assessment>",
     "activity_level": "<low/medium/high>",
-    "primary_focus": "<e.g. web development>",
-    "strengths": ["<strength1>", "<strength2>"],
-    "suggestions": ["<suggestion1>", "<suggestion2>"]
+    "primary_focus": "<focus area>",
+    "strengths": ["<strength1>"],
+    "suggestions": ["<suggestion1>"]
 }}
 """
-        response = self._call_gemini(prompt)
+        response = self._call_ai(prompt)
         result = self._extract_json(response)
-        return result if result else {
-            "message": "AI analysis could not be generated"
-        }
+        return result if result else {"message": "AI analysis unavailable"}
 
     # ─── Chat With Resume ─────────────────────────────────────────
     def chat_with_resume(
@@ -591,7 +549,6 @@ Return this exact JSON structure:
         user_message: str,
         chat_history: List = None
     ) -> str:
-        """Chat with AI about resume content"""
         if not self.available:
             return self._unavailable_text("Chat")
 
@@ -607,21 +564,19 @@ Return this exact JSON structure:
                 history_text += f"Assistant: {entry.get('ai_response', '')}\n"
 
         prompt = f"""
-You are a helpful career advisor with access to this candidate's resume.
-Answer questions specifically about their resume and career.
-Be concise, helpful and specific.
-
-Resume Summary:
-- Candidate: {name}
+Resume:
+- Name: {name}
 - Skills: {', '.join(skills) if skills else 'Not specified'}
-- Resume Content: {full_text}
+- Content: {full_text}
 
-Previous Conversation:
-{history_text if history_text else 'No previous conversation'}
+Previous Chat:
+{history_text if history_text else 'None'}
 
-Current Question: {user_message}
-
-Provide a helpful, specific answer based on the resume content.
+Question: {user_message}
 """
-        response = self._call_gemini(prompt, temperature=0.5)
+        response = self._call_ai(
+            prompt,
+            temperature=0.5,
+            system="You are a helpful career advisor. Answer questions about the candidate's resume specifically and concisely."
+        )
         return response if response else self._unavailable_text("Chat")

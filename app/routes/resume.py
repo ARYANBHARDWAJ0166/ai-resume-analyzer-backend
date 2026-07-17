@@ -18,7 +18,7 @@ router = APIRouter(tags=["resume"])
 # ─── Service Instances ────────────────────────────────────
 # Created once at startup, shared across requests safely
 parser = ResumeParser()
-analyzer = ResumeAnalyzer(settings.GEMINI_API_KEY)
+analyzer = ResumeAnalyzer()
 matcher = JobMatcher()
 report_gen = ReportGenerator()
 

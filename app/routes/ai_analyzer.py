@@ -25,8 +25,8 @@ logger = logging.getLogger(__name__)
 router = APIRouter(tags=["ai_analyzer"])
 
 # ─── Service Instances ────────────────────────────────────
-advanced_analyzer = AdvancedAnalyzer(settings.GEMINI_API_KEY)
-analyzer = ResumeAnalyzer(settings.GEMINI_API_KEY)
+advanced_analyzer = AdvancedAnalyzer()
+analyzer = ResumeAnalyzer()
 
 
 # ─── Generate Heatmap ─────────────────────────────────────
