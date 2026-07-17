@@ -12,6 +12,7 @@ class ResumeAnalyzer:
     def __init__(self, api_key: str):
         self.available = False
         self.client = None
+        self.model = None
 
         if not api_key:
             logger.warning("⚠️ No Gemini API key provided. AI analysis unavailable.")
@@ -24,14 +25,22 @@ class ResumeAnalyzer:
         except Exception as e:
             logger.error(f"❌ Failed to initialize Gemini client: {e}")
 
-    def _call_gemini(self, prompt: str, model: str = "gemini-1.5-flash") -> Optional[str]:
+    def _get_model(self) -> str:
+        """Get model name from settings"""
+        try:
+            from ..config import settings
+            return settings.GEMINI_MODEL
+        except Exception:
+            return "gemini-2.0-flash"
+
+    def _call_gemini(self, prompt: str) -> Optional[str]:
         """Central method to call Gemini API with error handling"""
         if not self.available or not self.client:
             return None
 
         try:
             response = self.client.models.generate_content(
-                model=model,
+                model=self._get_model(),
                 contents=prompt,
                 config=types.GenerateContentConfig(
                     temperature=0.3,
@@ -49,22 +58,22 @@ class ResumeAnalyzer:
         if not text:
             return None
 
+        # Try direct JSON parse first
         try:
-            # Try direct JSON parse first
             return json.loads(text)
         except json.JSONDecodeError:
             pass
 
+        # Try to find JSON block in markdown
         try:
-            # Try to find JSON block in markdown
             match = re.search(r'```json\s*(.*?)\s*```', text, re.DOTALL)
             if match:
                 return json.loads(match.group(1))
         except json.JSONDecodeError:
             pass
 
+        # Try to find raw JSON object
         try:
-            # Try to find raw JSON object
             match = re.search(r'\{.*\}', text, re.DOTALL)
             if match:
                 return json.loads(match.group())
@@ -106,12 +115,18 @@ class ResumeAnalyzer:
             validated['section_scores'] = {}
 
         # Strings
-        validated['rewritten_summary'] = str(data.get('rewritten_summary', ''))
+        validated['rewritten_summary'] = str(
+            data.get('rewritten_summary', '')
+        )
         validated['detailed_feedback'] = data.get('detailed_feedback', {})
 
         return validated
 
-    def analyze_resume(self, parsed_data: Dict, job_description: Optional[str] = None) -> Dict:
+    def analyze_resume(
+        self,
+        parsed_data: Dict,
+        job_description: Optional[str] = None
+    ) -> Dict:
         """Analyze resume and return structured analysis"""
 
         # Validate input
